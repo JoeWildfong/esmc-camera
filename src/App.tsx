@@ -1,15 +1,20 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
+import { waitForCameraCommand, CameraCommand } from "./ffi";
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  const [response, setResponse] = useState("");
+  useEffect(() => {
+    invoke("console_camera_connection");
+  }, []);
+  const [cmd, setCmd] = useState("");
 
-  async function greet() {
+  async function command(command: CameraCommand) {
     // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+    console.log(`sending ${cmd}`);
+    setResponse(await waitForCameraCommand(command));
   }
 
   return (
@@ -33,17 +38,23 @@ function App() {
         className="row"
         onSubmit={(e) => {
           e.preventDefault();
-          greet();
+          command(JSON.parse(cmd));
         }}
       >
         <input
           id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
+          onChange={(e) => setCmd(e.currentTarget.value)}
+          placeholder="Enter a command..."
         />
-        <button type="submit">Greet</button>
+        <button type="submit">Send</button>
       </form>
-      <p>{greetMsg}</p>
+      <button onClick={(_e) => {
+        command({"PanTiltAbsolute": [0, 0]});
+      }}>PanTiltAbsolute(0, 0)</button>
+      <button onClick={(_e) => {
+        command({"ZoomAbsolute": 0});
+      }}>ZoomAbsolute(0)</button>
+      <p>{response}</p>
     </main>
   );
 }

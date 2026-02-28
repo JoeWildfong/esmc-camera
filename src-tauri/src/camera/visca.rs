@@ -1,10 +1,11 @@
 use std::io;
 
+use serde::Serialize;
 use thiserror::Error;
 use tokio_util::{bytes::{Buf, BytesMut}, codec};
 use log::warn;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize)]
 pub enum Command {
     PanTiltAbsolute{
         pan: u16,

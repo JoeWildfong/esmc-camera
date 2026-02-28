@@ -32,7 +32,7 @@ pub struct CommandHandle {
 
 impl CommandHandle {
     pub async fn wait(self) -> CompletionResult {
-        self.completion.await.unwrap()
+        self.completion.await.unwrap_or(CompletionResult::Error)
     }
 }
 
@@ -69,11 +69,8 @@ pub enum CommandError {
     #[error("command cannot currently be executed")]
     CommandNotExecutable,
 
-    #[error("camera manager is shutting down")]
-    ShuttingDown,
-
     #[error("no connection to camera")]
-    NoCamera,
+    Disconnected,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,7 +99,7 @@ pub fn camera() -> (ViscaCamera, ViscaCameraWorker) {
             worker_state: WorkerState::default(),
             command_recv,
             cancel_recv,
-            running_commands_by_socket: [const { None }; 2],
+            running_commands_by_socket: [const { None }; _],
             cmd_id_iter: CommandIdIter::default(),
         }
     )
@@ -117,7 +114,7 @@ impl ViscaCamera {
     pub async fn command(&self, command: CameraCommand) -> Result<CommandHandle, CommandError> {
         let (send, recv) = oneshot::channel();
         self.command_send.send((command, send)).await.unwrap();
-        recv.await.map_err(|_| CommandError::ShuttingDown).flatten()
+        recv.await.map_err(|_| CommandError::Disconnected).flatten()
     }
 
     pub async fn cancel_command(&self, handle: CommandHandle) {
@@ -136,7 +133,7 @@ pub struct ViscaCameraWorker {
     worker_state: WorkerState,
     command_recv: mpsc::Receiver<(CameraCommand, oneshot::Sender<Result<CommandHandle, CommandError>>)>,
     cancel_recv: mpsc::Receiver<CommandHandle>,
-    running_commands_by_socket: [Option<InternalCommandHandle>; 2],
+    running_commands_by_socket: [Option<InternalCommandHandle>; 3],
     cmd_id_iter: CommandIdIter,
 }
 
@@ -163,6 +160,7 @@ impl ViscaCameraWorker {
                     break;
                 }
                 response = io.next() => {
+                    println!("io event {response:?}");
                     match response {
                         None => todo!(),
                         Some(Err(e)) => return Err(e),
@@ -216,6 +214,9 @@ impl ViscaCameraWorker {
                     if matches!(self.running_commands_by_socket[usize::from(socket)], Some(ref running) if running.id == handle.id) {
                         io.send(visca::Command::Cancel(socket)).await?;
                     }
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                    println!("running worker: state {:?}", self.worker_state);
                 }
             }
         }

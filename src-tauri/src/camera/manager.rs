@@ -1,4 +1,4 @@
-use std::{future::Future};
+use std::future::Future;
 
 use log::error;
 use tauri::async_runtime;
@@ -10,9 +10,11 @@ use crate::camera::{CameraCommand, CommandError, CommandHandle, ViscaCamera, vis
 
 type WorkerHandle = async_runtime::JoinHandle<Result<(), visca::Error>>;
 
+#[derive(Debug, Clone)]
 pub enum ManagerState {
     Connected(String),
     Disconnected,
+    Debug,
 }
 
 pub struct Manager {
@@ -45,7 +47,7 @@ impl Manager {
     pub async fn command(&self, cmd: CameraCommand) -> Result<CommandHandle, CommandError> {
         match self.cam.read().await.as_ref() {
             Some(c) => c.command(cmd).await,
-            None => Err(CommandError::NoCamera),
+            None => Err(CommandError::Disconnected),
         }
     }
 
@@ -69,15 +71,31 @@ impl Manager {
                     if let Err(_) = e {
                         return;
                     }
-                    let target = target_state.borrow_and_update();
-                    let (s, w) = match self.go_to_state(&target).await {
-                        Some((s, w)) => (Some(s), Some(w)),
-                        None => (None, None),
-                    };
-                    *self.cam.write().await = s;
-                    worker = w;
+                    let target = target_state.borrow_and_update().clone();
+                    println!("going to state {target:?}");
+                    // this sucks, would like to find a nicer way to cancel ongoing state changes when new ones arrive
+                    tokio::select! {
+                        result = self.go_to_state(&target) => {
+                            let (cam, work) = match result {
+                                Some((c, w)) => (Some(c), Some(w)),
+                                None => (None, None),
+                            };
+                            *self.cam.write().await = cam;
+                            if let Some(previous) = std::mem::replace(&mut worker, work) {
+                                previous.abort();
+                            }
+                        }
+                        _ = target_state.changed() => {
+                            println!("cancelled state change");
+                            target_state.mark_changed();
+                            continue;
+                        }
+                    }
+
                 }
                 exit = wait_if_some(worker.as_mut()) => {
+                    println!("worker died");
+                    let _ = self.real_state.send(ManagerState::Disconnected);
                     match exit {
                         Err(e) => {
                             error!("[manager] tokio error {e}");
@@ -89,7 +107,7 @@ impl Manager {
                             return;
                         }
                     }
-                    let target = target_state.borrow();
+                    let target = target_state.borrow().clone();
                     let (s, w) = match self.go_to_state(&target).await {
                         Some((s, w)) => (Some(s), Some(w)),
                         None => (None, None),
@@ -97,14 +115,18 @@ impl Manager {
                     *self.cam.write().await = s;
                     worker = w;
                 }
+                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                    let recv = self.real_state.subscribe();
+                    let current_state = &*recv.borrow();
+                    println!("running camera: state {current_state:?}")
+                }
             }
         }
     }
 
     async fn go_to_state(&self, target: &ManagerState) -> Option<(ViscaCamera, WorkerHandle)> {
-        match target {
+        let result = match target {
             ManagerState::Disconnected => {
-                let _ = self.real_state.send(ManagerState::Disconnected);
                 None
             },
             ManagerState::Connected(s) => {
@@ -122,6 +144,103 @@ impl Manager {
                     }
                 }
             }
+            ManagerState::Debug => {
+                let codec = debug::DebugIo::new();
+                let cancel_token = self.cancel.child_token();
+                let (cam, mut cam_worker) = super::camera();
+                Some((cam, async_runtime::spawn(async move {
+                    let out = cam_worker.run(codec, cancel_token).await;
+                    println!("worker gone: {out:?}");
+                    out
+                })))
+            }
+        };
+        println!("go_to_state {target:?}");
+        let _ = self.real_state.send_replace(target.clone());
+        result
+    }
+}
+
+mod debug {
+    use std::task::Poll;
+
+    use futures::{Sink, Stream};
+    use tokio::io::{Stdin, Stdout};
+    use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec, LinesCodecError};
+
+    use crate::camera::visca::{self, CameraMessage};
+
+    pin_project_lite::pin_project! {
+        pub(super) struct DebugIo {
+            #[pin]
+            stdin: FramedRead<Stdin, LinesCodec>,
+
+            #[pin]
+            stdout: FramedWrite<Stdout, LinesCodec>,
+        }
+    }
+
+    impl DebugIo {
+        pub(super) fn new() -> Self {
+            Self {
+                stdin: FramedRead::new(tokio::io::stdin(), LinesCodec::new()),
+                stdout: FramedWrite::new(tokio::io::stdout(), LinesCodec::new()),
+            }
+        }
+
+        fn convert_err(lines_err: LinesCodecError) -> visca::Error {
+            match lines_err {
+                LinesCodecError::Io(e) => visca::Error::Io(e),
+                LinesCodecError::MaxLineLengthExceeded => visca::Error::Io(std::io::Error::other("max line length exceeded"))
+            }
+        }
+    }
+
+    impl Stream for DebugIo {
+        type Item = Result<CameraMessage, visca::Error>;
+
+        fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+            let Poll::Ready(line) = self.project().stdin.poll_next(cx) else {
+                return Poll::Pending;
+            };
+            let Some(line) = line else {
+                return Poll::Ready(None);
+            };
+
+            Poll::Ready(Some(match line.unwrap().as_str() {
+                "accepted 1" => Ok(visca::CameraMessage::Response(visca::ResponseMessage::Accepted(1))),
+                "accepted 2" => Ok(visca::CameraMessage::Response(visca::ResponseMessage::Accepted(2))),
+                "completed 1" => Ok(visca::CameraMessage::Completion(visca::CompletionMessage {
+                    kind: visca::CompletionMessageKind::Completed,
+                    socket: 1,
+                })),
+                "completed 2" => Ok(visca::CameraMessage::Completion(visca::CompletionMessage {
+                    kind: visca::CompletionMessageKind::Completed,
+                    socket: 2,
+                })),
+                _ => Err(visca::Error::Io(std::io::Error::other("simulated io error"))),
+            }))
+        }
+    }
+
+    impl Sink<visca::Command> for DebugIo {
+        type Error = visca::Error;
+
+        fn start_send(self: std::pin::Pin<&mut Self>, item: visca::Command) -> Result<(), Self::Error> {
+            let string = serde_json::to_string(&item).unwrap();
+            self.project().stdout.start_send(string).map_err(Self::convert_err)
+        }
+
+        fn poll_ready(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+            <FramedWrite<Stdout, LinesCodec> as Sink<String>>::poll_ready(self.project().stdout, cx).map_err(Self::convert_err)
+        }
+
+        fn poll_close(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+            <FramedWrite<Stdout, LinesCodec> as Sink<String>>::poll_close(self.project().stdout, cx).map_err(Self::convert_err)
+        }
+
+        fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+            <FramedWrite<Stdout, LinesCodec> as Sink<String>>::poll_flush(self.project().stdout, cx).map_err(Self::convert_err)
         }
     }
 }
