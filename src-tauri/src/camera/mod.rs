@@ -1,5 +1,9 @@
-// mod manager;
-mod visca;
+mod manager;
+pub use manager::{Manager, ManagerState};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+pub mod visca;
 
 use std::mem;
 
@@ -10,6 +14,7 @@ pub use visca::Codec as ViscaCodec;
 use futures::{Sink, SinkExt, Stream, StreamExt as _};
 use tokio::sync::{mpsc, oneshot};
 
+#[derive(Serialize, Deserialize, Debug)]
 pub enum CameraCommand {
     PanTiltAbsolute(u16, u16),
     PanTiltRelative(u16, u16),
@@ -36,7 +41,7 @@ struct InternalCommandHandle {
     completion: oneshot::Sender<CompletionResult>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum CompletionResult {
     Cancelled,
     Finished,
@@ -53,12 +58,22 @@ impl From<visca::CompletionMessageKind> for CompletionResult {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error, Serialize)]
 pub enum CommandError {
+    #[error("camera reported a syntax error")]
     SyntaxError,
+
+    #[error("camera's command buffer is full")]
     CommandBufferFull,
+
+    #[error("command cannot currently be executed")]
     CommandNotExecutable,
+
+    #[error("camera manager is shutting down")]
     ShuttingDown,
+
+    #[error("no connection to camera")]
+    NoCamera,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,12 +90,11 @@ impl CommandIdIter {
     }
 }
 
-pub fn camera(cancel: CancellationToken) -> (ViscaCamera, ViscaCameraWorker) {
+pub fn camera() -> (ViscaCamera, ViscaCameraWorker) {
     let (command_send, command_recv) = mpsc::channel(2);
     let (cancel_send, cancel_recv) = mpsc::channel(2);
     (
         ViscaCamera {
-            cancel: cancel.child_token(),
             command_send,
             cancel_send,
         },
@@ -95,7 +109,6 @@ pub fn camera(cancel: CancellationToken) -> (ViscaCamera, ViscaCameraWorker) {
 }
 
 pub struct ViscaCamera {
-    cancel: CancellationToken,
     command_send: mpsc::Sender<(CameraCommand, oneshot::Sender<Result<CommandHandle, CommandError>>)>,
     cancel_send: mpsc::Sender<CommandHandle>,
 }
@@ -133,7 +146,7 @@ impl ViscaCameraWorker {
     /// range: 0x01 (slow) - 0x14 (high)
     const TILT_SPEED: u8 = 0x05;
 
-    async fn run<Io>(
+    pub async fn run<Io>(
         &mut self,
         io: Io,
         cancel: CancellationToken,
