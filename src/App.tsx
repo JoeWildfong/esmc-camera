@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
-import { waitForCameraCommand, CameraCommand } from "./ffi";
+import { waitForCameraCommand, CameraCommand, consoleCameraConnection } from "./ffi";
 
 function App() {
   const [response, setResponse] = useState("");
   useEffect(() => {
-    invoke("console_camera_connection");
+    consoleCameraConnection();
   }, []);
   const [cmd, setCmd] = useState("");
 
