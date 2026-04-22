@@ -13,6 +13,9 @@ type PortTypeIconProps = {
 }
 
 const PortTypeIcon: React.FC<PortTypeIconProps> = ({type}) => {
+    if (typeof type === 'object' && Object.hasOwn(type, "UsbPort")) {
+        return <Usb />
+    }
     switch (type) {
         case "BluetoothPort":
             return <Bluetooth />;
@@ -22,8 +25,6 @@ const PortTypeIcon: React.FC<PortTypeIconProps> = ({type}) => {
             return <></>;
         case "Ghost":
             return <Ghost />;
-        default:
-            return <Usb />;
     }
 }
 
