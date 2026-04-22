@@ -1,7 +1,9 @@
-# Tauri + React + Typescript
+# esmc-camera
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+This is a Tauri app for controlling a camera, mostly using keyboard shortcuts.
 
-## Recommended IDE Setup
+## Running
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+To run a Tauri app, both a Javascript runtime and a Rust compiler are needed. This repo should work with any recent version of Node, and the latest Rust compiler.
+
+Once these are installed, run `npm run tauri dev` to start the app.
