@@ -1,9 +1,11 @@
-use std::future::Future;
+use std::{future::Future, time::Duration};
 
+use futures::{Stream, StreamExt};
 use log::error;
 use tauri::async_runtime;
 use tokio::sync::{RwLock, watch};
 use tokio_serial::{SerialStream, frame::SerialFramed};
+use tokio_stream::wrappers::WatchStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::camera::{CameraCommand, CommandError, CommandHandle, ViscaCamera, visca};
@@ -52,44 +54,30 @@ impl Manager {
     }
 
     pub async fn run(&self) {
-        let mut target_state = self.recv_target_state.clone();
+        let target_state = WatchStream::new(self.recv_target_state.clone());
         let mut worker: Option<WorkerHandle> = None;
 
-        async fn wait_if_some<F: Future>(fut: Option<F>) -> F::Output {
-            match fut {
-                Some(f) => f.await,
-                None => std::future::pending().await,
-            }
-        }
-
+        let connected = buffer_latest(target_state.map(async |target| {
+            println!("going to state {target:?}");
+            self.go_to_state(&target).await
+        }));
+        let mut connected = std::pin::pin!(connected);
         loop {
             tokio::select! {
                 () = self.cancel.cancelled() => {
                     return;
                 }
-                e = target_state.changed() => {
-                    if let Err(_) = e {
+                v = connected.next() => {
+                    let Some(new_state) = v else {
                         return;
-                    }
-                    let target = target_state.borrow_and_update().clone();
-                    println!("going to state {target:?}");
-                    // this sucks, would like to find a nicer way to cancel ongoing state changes when new ones arrive
-                    tokio::select! {
-                        result = self.go_to_state(&target) => {
-                            let (cam, work) = match result {
-                                Some((c, w)) => (Some(c), Some(w)),
-                                None => (None, None),
-                            };
-                            *self.cam.write().await = cam;
-                            if let Some(previous) = std::mem::replace(&mut worker, work) {
-                                previous.abort();
-                            }
-                        }
-                        _ = target_state.changed() => {
-                            println!("cancelled state change");
-                            target_state.mark_changed();
-                            continue;
-                        }
+                    };
+                    let (cam, work) = match new_state {
+                        Some((c, w)) => (Some(c), Some(w)),
+                        None => (None, None),
+                    };
+                    *self.cam.write().await = cam;
+                    if let Some(previous) = std::mem::replace(&mut worker, work) {
+                        previous.abort();
                     }
 
                 }
@@ -107,18 +95,8 @@ impl Manager {
                             return;
                         }
                     }
-                    let target = target_state.borrow().clone();
-                    let (s, w) = match self.go_to_state(&target).await {
-                        Some((s, w)) => (Some(s), Some(w)),
-                        None => (None, None),
-                    };
-                    *self.cam.write().await = s;
-                    worker = w;
-                }
-                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
-                    let recv = self.real_state.subscribe();
-                    let current_state = &*recv.borrow();
-                    println!("running camera: state {current_state:?}")
+                    // resend current target state to try reconnecting
+                    self.send_target_state.send_modify(|_| {});
                 }
             }
         }
@@ -130,17 +108,20 @@ impl Manager {
                 None
             },
             ManagerState::Connected(s) => {
-                match SerialStream::open(&tokio_serial::new(s, 9600)) {
-                    Ok(io) => {
-                        let codec = SerialFramed::new(io, super::visca::Codec::new(1));
-                        let cancel_token = self.cancel.child_token();
-                        let (cam, mut cam_worker) = super::camera();
-                        Some((cam, async_runtime::spawn(async move {
-                            cam_worker.run(codec, cancel_token).await
-                        })))
-                    }
-                    Err(_) => {
-                        todo!();
+                loop {
+                    match SerialStream::open(&tokio_serial::new(s, 9600)) {
+                        Ok(io) => {
+                            let codec = SerialFramed::new(io, super::visca::Codec::new(1));
+                            let cancel_token = self.cancel.child_token();
+                            let (cam, mut cam_worker) = super::camera();
+                            break Some((cam, async_runtime::spawn(async move {
+                                cam_worker.run(codec, cancel_token).await
+                            })));
+                        }
+                        Err(_) => {
+                            println!("failed to open {s:?}, retrying in 1s");
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        }
                     }
                 }
             }
@@ -149,15 +130,55 @@ impl Manager {
                 let cancel_token = self.cancel.child_token();
                 let (cam, mut cam_worker) = super::camera();
                 Some((cam, async_runtime::spawn(async move {
-                    let out = cam_worker.run(codec, cancel_token).await;
-                    println!("worker gone: {out:?}");
-                    out
+                    cam_worker.run(codec, cancel_token).await
                 })))
             }
         };
-        println!("go_to_state {target:?}");
+        println!("in state {target:?}");
         let _ = self.real_state.send_replace(target.clone());
         result
+    }
+}
+
+impl Default for Manager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+async fn wait_if_some<F: Future>(fut: Option<F>) -> F::Output {
+    match fut {
+        Some(f) => f.await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Races futures in a stream against the stream producing another future.
+/// The latest future from the stream is polled alongside the stream's `next()`:
+///     - if the future resolves before the next future is available, the resolved value is yielded
+///     - if a new future arrives first, the previous future is dropped and nothing is yielded
+/// see: https://github.com/rust-lang/futures-rs/issues/2544
+fn buffer_latest<S, T>(stream: S) -> impl Stream<Item = T>
+where
+    S: Stream,
+    S::Item: Future<Output = T>,
+{
+    async_stream::stream! {
+        let mut in_progress = None;
+        let mut stream = std::pin::pin!(stream);
+        loop {
+            tokio::select! {
+                fut = stream.next() => {
+                    let Some(fut) = fut else {
+                        break;
+                    };
+                    in_progress = Some(fut);
+                }
+                val = wait_if_some(in_progress.take()) => {
+                    yield val;
+                }
+            }
+        }
     }
 }
 

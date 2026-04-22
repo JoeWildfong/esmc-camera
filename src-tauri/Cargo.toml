@@ -29,6 +29,9 @@ tokio-util = { version = "0.7.17", features = ["codec"] }
 futures = "0.3.31"
 log = "0.4.29"
 tokio-serial = { version = "5.4.5", features = ["codec"] }
+serialport = { version = "4.9.0", features = ["serde"], default-features = false }
+async-stream = "0.3.6"
+tokio-stream = { version = "0.1.18", features = ["sync"] }
 
 [dev-dependencies]
 hex = "0.4.3"

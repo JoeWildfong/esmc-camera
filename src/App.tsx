@@ -1,13 +1,11 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import reactLogo from "./assets/react.svg";
 import "./App.css";
-import { waitForCameraCommand, CameraCommand, consoleCameraConnection } from "./ffi";
+import { waitForCameraCommand, CameraCommand } from "./ffi";
+import { PortSwitcher } from "./PortSwitcher";
 
 function App() {
   const [response, setResponse] = useState("");
-  useEffect(() => {
-    consoleCameraConnection();
-  }, []);
   const [cmd, setCmd] = useState("");
 
   async function command(command: CameraCommand) {
@@ -32,6 +30,8 @@ function App() {
         </a>
       </div>
       <p>Click on the Tauri, Vite, and React logos to learn more.</p>
+
+      <PortSwitcher></PortSwitcher>
 
       <form
         className="row"

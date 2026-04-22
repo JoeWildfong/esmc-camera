@@ -1,12 +1,33 @@
-use std::sync::LazyLock;
+use std::{sync::LazyLock, time::Duration};
 
-use tauri::async_runtime;
+use tauri::{async_runtime, ipc};
+use tokio_serial::SerialPortInfo;
 
 use crate::camera::CameraCommand;
 
 pub mod camera;
 
-static CAMERA: LazyLock<camera::Manager> = LazyLock::new(|| camera::Manager::new());
+static CAMERA: LazyLock<camera::Manager> = LazyLock::new(camera::Manager::new);
+
+#[tauri::command]
+async fn stream_available_ports(channel: ipc::Channel<Vec<SerialPortInfo>>) -> Result<(), tauri::Error> {
+    // let mut last_list = None;
+    // loop {
+    //     if let Ok(ports) = tokio_serial::available_ports() {
+    //         if last_list.as_ref().is_none_or(|last| last == &ports) {
+    //             last_list = Some(ports.clone());
+    //             channel.send(ports)?;
+    //         }
+    //     }
+    //     tokio::time::sleep(Duration::from_secs(1)).await;
+    // }
+    loop {
+        let _ = channel.send(vec![]);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let _ = channel.send(vec![SerialPortInfo { port_name: "test".to_owned(), port_type: serialport::SerialPortType::PciPort }]);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+}
 
 #[tauri::command]
 async fn set_camera_connection(port: String) {
@@ -42,6 +63,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            stream_available_ports,
             set_camera_connection,
             console_camera_connection,
             disconnect_camera,
