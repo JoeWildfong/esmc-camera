@@ -33,7 +33,7 @@ type PortOption = {
   type: SerialPortType | 'Ghost',
 };
 
-export const PortSwitcher = () => {
+const PortSwitcher = () => {
   const availablePorts = useAvailablePorts();
   const consolePort: PortOption = {
     value: 'consolePort',
@@ -64,24 +64,26 @@ export const PortSwitcher = () => {
     setCurrentPort(port);
   };
 
-  // if the currently selected port is not available, still show it in the list as a "ghost"
-  // the camera manager will reopen the port if/when it becomes available again
-  const ghostPort: PortOption[] = [];
-  if (![consolePort.value, disconnect.value, ...availablePorts.map((port) => port.port_name)].includes(currentPort.value)) {
-    ghostPort.push({ value: currentPort.value, label: currentPort.label, type: 'Ghost' });
-  }
-
   const options: PortOption[] = [
-    ...ghostPort,
-    ...availablePorts.map((port) => ({ value: port.port_name, label: port.port_name, type: port.port_type })),
+    ...availablePorts.map((port) => ({
+      value: port.port_name,
+      label: port.port_name,
+      type: port.port_type,
+    })),
     consolePort,
     disconnect,
   ];
 
+  // if the currently selected port is not available, still show it in the list as a "ghost"
+  // the camera manager will reopen the port if/when it becomes available again
+  if (!options.some((port) => port.value === currentPort.value)) {
+    options.unshift({ value: currentPort.value, label: currentPort.label, type: 'Ghost' });
+  }
+
   return (
     <Select<PortOption, false>
       onChange={portChanged}
-      formatOptionLabel={(data, _meta) => (
+      formatOptionLabel={(data) => (
         <>
           <PortTypeIcon type={data.type} />
           {data.label}
@@ -94,3 +96,5 @@ export const PortSwitcher = () => {
     />
   );
 };
+
+export default PortSwitcher;

@@ -22,9 +22,9 @@ export default defineConfig([
       'block-scoped-var': 'error',
       complexity: ['off', 11],
       'class-methods-use-this': ['error', { exceptMethods: [] }],
-      'consistent-return': 'error',
+      'consistent-return': 'off',
       curly: ['error', 'multi-line'],
-      'default-case': ['error', { commentPattern: '^no default$' }],
+      'default-case': 'off',
       'default-case-last': 'off',
       'default-param-last': 'off',
       'dot-notation': ['error', { allowKeywords: true }],
@@ -1224,7 +1224,7 @@ export default defineConfig([
     ignores: [
       'dist/**',
       'node_modules/**',
-      'src-tauri/target/**'
+      'src-tauri/target/**',
     ],
   },
 ]);

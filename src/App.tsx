@@ -2,15 +2,13 @@ import { useState } from 'react';
 import reactLogo from './assets/react.svg';
 import './App.css';
 import { waitForCameraCommand, CameraCommand } from './ffi';
-import { PortSwitcher } from './PortSwitcher';
+import PortSwitcher from './PortSwitcher';
 
 function App() {
   const [response, setResponse] = useState('');
   const [cmd, setCmd] = useState('');
 
-  async function command(command: CameraCommand) {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    console.log(`sending ${cmd}`);
+  async function sendCommand(command: CameraCommand) {
     setResponse(await waitForCameraCommand(command));
   }
 
@@ -37,7 +35,7 @@ function App() {
         className="row"
         onSubmit={(e) => {
           e.preventDefault();
-          command(JSON.parse(cmd));
+          sendCommand(JSON.parse(cmd));
         }}
       >
         <input
@@ -47,15 +45,19 @@ function App() {
         />
         <button type="submit">Send</button>
       </form>
-      <button onClick={(_e) => {
-        command({ PanTiltAbsolute: [0, 0] });
-      }}
+      <button
+        type="button"
+        onClick={() => {
+          sendCommand({ PanTiltAbsolute: [0, 0] });
+        }}
       >
         PanTiltAbsolute(0, 0)
       </button>
-      <button onClick={(_e) => {
-        command({ ZoomAbsolute: 0 });
-      }}
+      <button
+        type="button"
+        onClick={() => {
+          sendCommand({ ZoomAbsolute: 0 });
+        }}
       >
         ZoomAbsolute(0)
       </button>
