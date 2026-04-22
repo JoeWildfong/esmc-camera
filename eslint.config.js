@@ -1223,7 +1223,8 @@ export default defineConfig([
   {
     ignores: [
       'dist/**',
-      'coverage/**',
+      'node_modules/**',
+      'src-tauri/target/**'
     ],
   },
 ]);
