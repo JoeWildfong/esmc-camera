@@ -10,22 +10,30 @@ pub mod camera;
 static CAMERA: LazyLock<camera::Manager> = LazyLock::new(camera::Manager::new);
 
 #[tauri::command]
-async fn stream_available_ports(channel: ipc::Channel<Vec<SerialPortInfo>>) -> Result<(), tauri::Error> {
-    // let mut last_list = None;
-    // loop {
-    //     if let Ok(ports) = tokio_serial::available_ports() {
-    //         if last_list.as_ref().is_none_or(|last| last == &ports) {
-    //             last_list = Some(ports.clone());
-    //             channel.send(ports)?;
-    //         }
-    //     }
-    //     tokio::time::sleep(Duration::from_secs(1)).await;
-    // }
+async fn stream_available_ports(
+    channel: ipc::Channel<Vec<SerialPortInfo>>,
+) -> Result<(), tauri::Error> {
+    #[cfg(feature = "flaky_fake_serial_port")]
+    let mut flaky_counter = [false; 5].into_iter().chain([true; 5].into_iter()).cycle();
+    let mut last_list = None;
     loop {
-        let _ = channel.send(vec![]);
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        let _ = channel.send(vec![SerialPortInfo { port_name: "test".to_owned(), port_type: serialport::SerialPortType::PciPort }]);
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        #[cfg_attr(not(feature = "flaky_fake_serial_port"), expect(unused_mut))]
+        if let Ok(mut ports) = tokio_serial::available_ports() {
+            #[cfg(feature = "flaky_fake_serial_port")]
+            {
+                if flaky_counter.next().unwrap() {
+                    ports.push(SerialPortInfo {
+                        port_name: "flaky fake port".to_owned(),
+                        port_type: serialport::SerialPortType::PciPort,
+                    });
+                }
+            }
+            if last_list.as_ref().is_none_or(|last| last == &ports) {
+                last_list = Some(ports.clone());
+                channel.send(ports)?;
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
