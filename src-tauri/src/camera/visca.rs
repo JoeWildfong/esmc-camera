@@ -1,19 +1,22 @@
 use std::io;
 
+use log::warn;
 use serde::Serialize;
 use thiserror::Error;
-use tokio_util::{bytes::{Buf, BytesMut}, codec};
-use log::warn;
+use tokio_util::{
+    bytes::{Buf, BytesMut},
+    codec,
+};
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub enum Command {
-    PanTiltAbsolute{
+    PanTiltAbsolute {
         pan: u16,
         tilt: u16,
         pan_speed: u8,
         tilt_speed: u8,
     },
-    PanTiltRelative{
+    PanTiltRelative {
         pan: u16,
         tilt: u16,
         pan_speed: u8,
@@ -48,15 +51,24 @@ impl CameraMessage {
     }
 
     fn completed(socket: u8) -> Self {
-        Self::Completion(CompletionMessage { socket, kind: CompletionMessageKind::Completed })
+        Self::Completion(CompletionMessage {
+            socket,
+            kind: CompletionMessageKind::Completed,
+        })
     }
 
     fn cancelled(socket: u8) -> Self {
-        Self::Completion(CompletionMessage { socket, kind: CompletionMessageKind::Cancelled })
+        Self::Completion(CompletionMessage {
+            socket,
+            kind: CompletionMessageKind::Cancelled,
+        })
     }
 
     fn command_not_executable(socket: u8) -> Self {
-        Self::Completion(CompletionMessage { socket, kind: CompletionMessageKind::CommandNotExecutable })
+        Self::Completion(CompletionMessage {
+            socket,
+            kind: CompletionMessageKind::CommandNotExecutable,
+        })
     }
 }
 
@@ -107,18 +119,16 @@ impl codec::Decoder for Codec {
         let expected_first_byte = (self.cam_id + 8).unbounded_shl(4);
         match src.first() {
             None => return Ok(None),
-            Some(a) if *a == expected_first_byte => {},
-            Some(_) => {
-                match src.iter().position(|&b| b == expected_first_byte) {
-                    Some(a) => {
-                        src.advance(a);
-                    }
-                    None => {
-                        src.clear();
-                        return Ok(None);
-                    }
+            Some(a) if *a == expected_first_byte => {}
+            Some(_) => match src.iter().position(|&b| b == expected_first_byte) {
+                Some(a) => {
+                    src.advance(a);
                 }
-            }
+                None => {
+                    src.clear();
+                    return Ok(None);
+                }
+            },
         }
         let command = match src.iter().position(|&b| b == 0xff) {
             None => return Ok(None),
@@ -132,7 +142,9 @@ impl codec::Decoder for Codec {
             [_, 0x60, 0x03, 0xff] => CameraMessage::command_buffer_full(),
             [_, channel @ 0x60..=0x6f, 0x04, 0xff] => CameraMessage::cancelled(channel & 0x0f),
             [_, channel @ 0x60..=0x6f, 0x05, 0xff] => CameraMessage::no_socket(channel & 0x0f),
-            [_, channel @ 0x60..=0x6f, 0x41, 0xff] => CameraMessage::command_not_executable(channel & 0x0f),
+            [_, channel @ 0x60..=0x6f, 0x41, 0xff] => {
+                CameraMessage::command_not_executable(channel & 0x0f)
+            }
             _ => {
                 warn!("unknown response from camera: {:x?}", command.as_ref());
                 return self.decode(src);
@@ -148,45 +160,74 @@ impl codec::Encoder<Command> for Codec {
 
     fn encode(&mut self, item: Command, dst: &mut BytesMut) -> Result<(), Self::Error> {
         match item {
-            Command::PanTiltAbsolute{pan, tilt, pan_speed, tilt_speed} => {
+            Command::PanTiltAbsolute {
+                pan,
+                tilt,
+                pan_speed,
+                tilt_speed,
+            } => {
                 let p = u16_to_nibbles(pan);
                 let t = u16_to_nibbles(tilt);
                 dst.extend_from_slice(&[
-                    0x80 | self.cam_id, 0x01,
-                    0x06, 0x02,
-                    pan_speed, tilt_speed,
-                    p[0], p[1], p[2], p[3],
-                    t[0], t[1], t[2], t[3],
-                    0xFF
+                    0x80 | self.cam_id,
+                    0x01,
+                    0x06,
+                    0x02,
+                    pan_speed,
+                    tilt_speed,
+                    p[0],
+                    p[1],
+                    p[2],
+                    p[3],
+                    t[0],
+                    t[1],
+                    t[2],
+                    t[3],
+                    0xFF,
                 ]);
             }
-            Command::PanTiltRelative{pan, tilt, pan_speed, tilt_speed} => {
+            Command::PanTiltRelative {
+                pan,
+                tilt,
+                pan_speed,
+                tilt_speed,
+            } => {
                 let p = u16_to_nibbles(pan);
                 let t = u16_to_nibbles(tilt);
                 dst.extend_from_slice(&[
-                    0x80 | self.cam_id, 0x01,
-                    0x06, 0x03,
-                    pan_speed, tilt_speed,
-                    p[0], p[1], p[2], p[3],
-                    t[0], t[1], t[2], t[3],
-                    0xFF
+                    0x80 | self.cam_id,
+                    0x01,
+                    0x06,
+                    0x03,
+                    pan_speed,
+                    tilt_speed,
+                    p[0],
+                    p[1],
+                    p[2],
+                    p[3],
+                    t[0],
+                    t[1],
+                    t[2],
+                    t[3],
+                    0xFF,
                 ]);
             }
             Command::ZoomAbsolute(zoom) => {
                 let z = u16_to_nibbles(zoom);
                 dst.extend_from_slice(&[
-                    0x80 | self.cam_id, 0x01,
-                    0x04, 0x47,
-                    z[0], z[1], z[2], z[3],
-                    0xFF
+                    0x80 | self.cam_id,
+                    0x01,
+                    0x04,
+                    0x47,
+                    z[0],
+                    z[1],
+                    z[2],
+                    z[3],
+                    0xFF,
                 ]);
             }
             Command::Cancel(socket) => {
-                dst.extend_from_slice(&[
-                    0x80 | self.cam_id,
-                    0x20 | (socket & 0x0f),
-                    0xFF
-                ]);
+                dst.extend_from_slice(&[0x80 | self.cam_id, 0x20 | (socket & 0x0f), 0xFF]);
             }
         }
         Ok(())
@@ -200,7 +241,10 @@ const fn u16_to_nibbles(v: u16) -> [u8; 4] {
 
 #[cfg(test)]
 mod tests {
-    use tokio_util::{bytes::BytesMut, codec::{Decoder, Encoder}};
+    use tokio_util::{
+        bytes::BytesMut,
+        codec::{Decoder, Encoder},
+    };
 
     use super::*;
 
@@ -230,7 +274,6 @@ mod tests {
             tilt_speed: 0xdd,
         },
         "81 01 06 02 cc dd 0a 0a 0a 0a 0b 0b 0b 0b ff",
-
         serialize_pan_tilt_relative,
         Command::PanTiltRelative {
             pan: 0xaaaa,
@@ -239,7 +282,6 @@ mod tests {
             tilt_speed: 0xdd,
         },
         "81 01 06 03 cc dd 0a 0a 0a 0a 0b 0b 0b 0b ff",
-
         serialize_zoom_absolute,
         Command::ZoomAbsolute(0xabcd),
         "81 01 04 47 0a 0b 0c 0d ff"
@@ -268,27 +310,21 @@ mod tests {
         deserialize_accepted,
         "90 41 ff",
         Some(CameraMessage::accepted(1)),
-
         deserialize_completed,
         "90 51 ff",
         Some(CameraMessage::completed(1)),
-
         deserialize_syntax_error,
         "90 60 02 ff",
         Some(CameraMessage::syntax_error()),
-
         deserialize_command_buffer_full,
         "90 60 03 ff",
         Some(CameraMessage::command_buffer_full()),
-
         deserialize_cancelled,
         "90 61 04 ff",
         Some(CameraMessage::cancelled(1)),
-
         deserialize_no_socket,
         "90 61 05 ff",
         Some(CameraMessage::no_socket(1)),
-
         deserialize_command_not_executable,
         "90 61 41 ff",
         Some(CameraMessage::command_not_executable(1))

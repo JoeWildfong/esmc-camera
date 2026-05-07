@@ -7,7 +7,7 @@ pub mod visca;
 
 use std::mem;
 
-use log::{info, warn, error};
+use log::{error, info, warn};
 use tokio_util::sync::CancellationToken;
 pub use visca::Codec as ViscaCodec;
 
@@ -101,12 +101,15 @@ pub fn camera() -> (ViscaCamera, ViscaCameraWorker) {
             cancel_recv,
             running_commands_by_socket: [const { None }; _],
             cmd_id_iter: CommandIdIter::default(),
-        }
+        },
     )
 }
 
 pub struct ViscaCamera {
-    command_send: mpsc::Sender<(CameraCommand, oneshot::Sender<Result<CommandHandle, CommandError>>)>,
+    command_send: mpsc::Sender<(
+        CameraCommand,
+        oneshot::Sender<Result<CommandHandle, CommandError>>,
+    )>,
     cancel_send: mpsc::Sender<CommandHandle>,
 }
 
@@ -131,7 +134,10 @@ enum WorkerState {
 
 pub struct ViscaCameraWorker {
     worker_state: WorkerState,
-    command_recv: mpsc::Receiver<(CameraCommand, oneshot::Sender<Result<CommandHandle, CommandError>>)>,
+    command_recv: mpsc::Receiver<(
+        CameraCommand,
+        oneshot::Sender<Result<CommandHandle, CommandError>>,
+    )>,
     cancel_recv: mpsc::Receiver<CommandHandle>,
     running_commands_by_socket: [Option<InternalCommandHandle>; 3],
     cmd_id_iter: CommandIdIter,
@@ -143,11 +149,7 @@ impl ViscaCameraWorker {
     /// range: 0x01 (slow) - 0x14 (high)
     const TILT_SPEED: u8 = 0x05;
 
-    pub async fn run<Io>(
-        &mut self,
-        io: Io,
-        cancel: CancellationToken,
-    ) -> Result<(), visca::Error>
+    pub async fn run<Io>(&mut self, io: Io, cancel: CancellationToken) -> Result<(), visca::Error>
     where
         Io: Stream<Item = Result<visca::CameraMessage, visca::Error>>,
         Io: Sink<visca::Command, Error = visca::Error>,
@@ -242,7 +244,8 @@ impl ViscaCameraWorker {
                             socket,
                             completion: completion_recv,
                         };
-                        self.running_commands_by_socket[usize::from(socket)] = Some(internal_handle);
+                        self.running_commands_by_socket[usize::from(socket)] =
+                            Some(internal_handle);
                         let _ = notify.send(Ok(handle));
                     }
                     visca::ResponseMessage::SyntaxError => {

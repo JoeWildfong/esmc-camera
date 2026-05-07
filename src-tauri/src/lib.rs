@@ -60,7 +60,9 @@ async fn send_camera_command(command: CameraCommand) -> Result<(), camera::Comma
 }
 
 #[tauri::command]
-async fn wait_for_camera_command(command: CameraCommand) -> Result<camera::CompletionResult, camera::CommandError> {
+async fn wait_for_camera_command(
+    command: CameraCommand,
+) -> Result<camera::CompletionResult, camera::CommandError> {
     let handle = CAMERA.command(command).await?;
     Ok(handle.wait().await)
 }

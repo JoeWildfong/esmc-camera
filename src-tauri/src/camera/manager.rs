@@ -3,12 +3,12 @@ use std::{future::Future, time::Duration};
 use futures::{Stream, StreamExt};
 use log::error;
 use tauri::async_runtime;
-use tokio::sync::{RwLock, watch};
-use tokio_serial::{SerialStream, frame::SerialFramed};
+use tokio::sync::{watch, RwLock};
+use tokio_serial::{frame::SerialFramed, SerialStream};
 use tokio_stream::wrappers::WatchStream;
 use tokio_util::sync::CancellationToken;
 
-use crate::camera::{CameraCommand, CommandError, CommandHandle, ViscaCamera, visca};
+use crate::camera::{visca, CameraCommand, CommandError, CommandHandle, ViscaCamera};
 
 type WorkerHandle = async_runtime::JoinHandle<Result<(), visca::Error>>;
 
@@ -24,7 +24,7 @@ pub struct Manager {
     send_target_state: watch::Sender<ManagerState>,
     recv_target_state: watch::Receiver<ManagerState>,
     real_state: watch::Sender<ManagerState>,
-    cam: RwLock<Option<ViscaCamera>>
+    cam: RwLock<Option<ViscaCamera>>,
 }
 
 impl Manager {
@@ -104,34 +104,34 @@ impl Manager {
 
     async fn go_to_state(&self, target: &ManagerState) -> Option<(ViscaCamera, WorkerHandle)> {
         let result = match target {
-            ManagerState::Disconnected => {
-                None
-            },
-            ManagerState::Connected(s) => {
-                loop {
-                    match SerialStream::open(&tokio_serial::new(s, 9600)) {
-                        Ok(io) => {
-                            let codec = SerialFramed::new(io, super::visca::Codec::new(1));
-                            let cancel_token = self.cancel.child_token();
-                            let (cam, mut cam_worker) = super::camera();
-                            break Some((cam, async_runtime::spawn(async move {
+            ManagerState::Disconnected => None,
+            ManagerState::Connected(s) => loop {
+                match SerialStream::open(&tokio_serial::new(s, 9600)) {
+                    Ok(io) => {
+                        let codec = SerialFramed::new(io, super::visca::Codec::new(1));
+                        let cancel_token = self.cancel.child_token();
+                        let (cam, mut cam_worker) = super::camera();
+                        break Some((
+                            cam,
+                            async_runtime::spawn(async move {
                                 cam_worker.run(codec, cancel_token).await
-                            })));
-                        }
-                        Err(_) => {
-                            println!("failed to open {s:?}, retrying in 1s");
-                            tokio::time::sleep(Duration::from_secs(1)).await;
-                        }
+                            }),
+                        ));
+                    }
+                    Err(_) => {
+                        println!("failed to open {s:?}, retrying in 1s");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 }
-            }
+            },
             ManagerState::Debug => {
                 let codec = debug::DebugIo::new();
                 let cancel_token = self.cancel.child_token();
                 let (cam, mut cam_worker) = super::camera();
-                Some((cam, async_runtime::spawn(async move {
-                    cam_worker.run(codec, cancel_token).await
-                })))
+                Some((
+                    cam,
+                    async_runtime::spawn(async move { cam_worker.run(codec, cancel_token).await }),
+                ))
             }
         };
         println!("in state {target:?}");
@@ -212,7 +212,9 @@ mod debug {
         fn convert_err(lines_err: LinesCodecError) -> visca::Error {
             match lines_err {
                 LinesCodecError::Io(e) => visca::Error::Io(e),
-                LinesCodecError::MaxLineLengthExceeded => visca::Error::Io(std::io::Error::other("max line length exceeded"))
+                LinesCodecError::MaxLineLengthExceeded => {
+                    visca::Error::Io(std::io::Error::other("max line length exceeded"))
+                }
             }
         }
     }
@@ -220,7 +222,10 @@ mod debug {
     impl Stream for DebugIo {
         type Item = Result<CameraMessage, visca::Error>;
 
-        fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+        fn poll_next(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
             let Poll::Ready(line) = self.project().stdin.poll_next(cx) else {
                 return Poll::Pending;
             };
@@ -229,8 +234,12 @@ mod debug {
             };
 
             Poll::Ready(Some(match line.unwrap().as_str() {
-                "accepted 1" => Ok(visca::CameraMessage::Response(visca::ResponseMessage::Accepted(1))),
-                "accepted 2" => Ok(visca::CameraMessage::Response(visca::ResponseMessage::Accepted(2))),
+                "accepted 1" => Ok(visca::CameraMessage::Response(
+                    visca::ResponseMessage::Accepted(1),
+                )),
+                "accepted 2" => Ok(visca::CameraMessage::Response(
+                    visca::ResponseMessage::Accepted(2),
+                )),
                 "completed 1" => Ok(visca::CameraMessage::Completion(visca::CompletionMessage {
                     kind: visca::CompletionMessageKind::Completed,
                     socket: 1,
@@ -239,7 +248,9 @@ mod debug {
                     kind: visca::CompletionMessageKind::Completed,
                     socket: 2,
                 })),
-                _ => Err(visca::Error::Io(std::io::Error::other("simulated io error"))),
+                _ => Err(visca::Error::Io(std::io::Error::other(
+                    "simulated io error",
+                ))),
             }))
         }
     }
@@ -247,21 +258,39 @@ mod debug {
     impl Sink<visca::Command> for DebugIo {
         type Error = visca::Error;
 
-        fn start_send(self: std::pin::Pin<&mut Self>, item: visca::Command) -> Result<(), Self::Error> {
+        fn start_send(
+            self: std::pin::Pin<&mut Self>,
+            item: visca::Command,
+        ) -> Result<(), Self::Error> {
             let string = serde_json::to_string(&item).unwrap();
-            self.project().stdout.start_send(string).map_err(Self::convert_err)
+            self.project()
+                .stdout
+                .start_send(string)
+                .map_err(Self::convert_err)
         }
 
-        fn poll_ready(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-            <FramedWrite<Stdout, LinesCodec> as Sink<String>>::poll_ready(self.project().stdout, cx).map_err(Self::convert_err)
+        fn poll_ready(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            <FramedWrite<Stdout, LinesCodec> as Sink<String>>::poll_ready(self.project().stdout, cx)
+                .map_err(Self::convert_err)
         }
 
-        fn poll_close(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-            <FramedWrite<Stdout, LinesCodec> as Sink<String>>::poll_close(self.project().stdout, cx).map_err(Self::convert_err)
+        fn poll_close(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            <FramedWrite<Stdout, LinesCodec> as Sink<String>>::poll_close(self.project().stdout, cx)
+                .map_err(Self::convert_err)
         }
 
-        fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
-            <FramedWrite<Stdout, LinesCodec> as Sink<String>>::poll_flush(self.project().stdout, cx).map_err(Self::convert_err)
+        fn poll_flush(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> Poll<Result<(), Self::Error>> {
+            <FramedWrite<Stdout, LinesCodec> as Sink<String>>::poll_flush(self.project().stdout, cx)
+                .map_err(Self::convert_err)
         }
     }
 }
