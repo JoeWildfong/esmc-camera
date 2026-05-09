@@ -29,7 +29,7 @@ async fn stream_available_ports(
                 }
                 ports
             };
-            if last_list.as_ref().is_none_or(|last| last == &ports) {
+            if last_list.as_ref() != Some(&ports) {
                 last_list = Some(ports.clone());
                 channel.send(ports)?;
             }
