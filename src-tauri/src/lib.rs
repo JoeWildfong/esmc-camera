@@ -14,20 +14,21 @@ async fn stream_available_ports(
     channel: ipc::Channel<Vec<SerialPortInfo>>,
 ) -> Result<(), tauri::Error> {
     #[cfg(feature = "flaky_fake_serial_port")]
-    let mut flaky_counter = [false; 5].into_iter().chain([true; 5].into_iter()).cycle();
+    let mut flaky_counter = [[false; 5], [true; 5]].concat().into_iter().cycle();
     let mut last_list = None;
     loop {
-        #[cfg_attr(not(feature = "flaky_fake_serial_port"), expect(unused_mut))]
-        if let Ok(mut ports) = tokio_serial::available_ports() {
+        if let Ok(ports) = tokio_serial::available_ports() {
             #[cfg(feature = "flaky_fake_serial_port")]
-            {
+            let ports = {
+                let mut ports = ports;
                 if flaky_counter.next().unwrap() {
                     ports.push(SerialPortInfo {
                         port_name: "flaky fake port".to_owned(),
                         port_type: serialport::SerialPortType::PciPort,
                     });
                 }
-            }
+                ports
+            };
             if last_list.as_ref().is_none_or(|last| last == &ports) {
                 last_list = Some(ports.clone());
                 channel.send(ports)?;
