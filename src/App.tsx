@@ -1,67 +1,103 @@
 import { useState } from 'react';
-import reactLogo from './assets/react.svg';
 import './App.css';
 import { waitForCameraCommand, CameraCommand } from './ffi';
 import PortSwitcher from './PortSwitcher';
+import Button from './Button';
 
-function App() {
+type CommandButton = {
+  label: string;
+  command: CameraCommand | null;
+  hold?: (index: number) => void;
+};
+
+const  App = () => {
   const [response, setResponse] = useState('');
-  const [cmd, setCmd] = useState('');
+  const [xSpeed, setXSpeed] = useState<number>(1);
+  const [ySpeed, setYSpeed] = useState<number>(1);
 
-  async function sendCommand(command: CameraCommand) {
+
+  const sendCommand = async (command: CameraCommand) => {
     setResponse(await waitForCameraCommand(command));
   }
 
+  const buttons: CommandButton[] = [
+    {
+      label: 'PanTiltAbsolute(0, 0)',
+      command: {
+        PanTiltAbsolute: [0, 0]
+      }
+    },
+    {
+      label: 'ZoomAbsolute(0)',
+      command: {
+        ZoomAbsolute: 0
+      }
+    }
+  ];
+
+  buttons.push(...(new Array(25) as CommandButton[]).fill({
+    label: '',
+    command: null,
+    hold: (index) => console.log(`Button ${index+1} Held`),
+  }));
+
+  buttons[16] = {
+    label: 'Up',
+    command: {
+      PanTiltRelative: [0, ySpeed]
+    }
+  };
+
+  buttons[19] = {
+    label: 'Down',
+    command: {
+      PanTiltRelative: [0, -ySpeed]
+    }
+  };
+
+  buttons[20] = {
+    label: 'Right',
+    command: {
+      PanTiltRelative: [xSpeed, 0]
+    }
+  };
+
+  buttons[18] = {
+    label: 'Left',
+    command: {
+      PanTiltRelative: [-xSpeed, 0]
+    }
+  };
+
   return (
     <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank" rel="noreferrer">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank" rel="noreferrer">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank" rel="noreferrer">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
       <PortSwitcher />
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          sendCommand(JSON.parse(cmd));
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setCmd(e.currentTarget.value)}
-          placeholder="Enter a command..."
-        />
-        <button type="submit">Send</button>
-      </form>
-      <button
-        type="button"
-        onClick={() => {
-          sendCommand({ PanTiltAbsolute: [0, 0] });
-        }}
-      >
-        PanTiltAbsolute(0, 0)
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          sendCommand({ ZoomAbsolute: 0 });
-        }}
-      >
-        ZoomAbsolute(0)
-      </button>
-      <p>{response}</p>
+      {response && <p>{response}</p>}
+      <div>
+        <label className="speed-control">Horizontal Speed ({xSpeed})
+          <input type="range" min={1} value={xSpeed} onChange={(e) => setXSpeed(e.target.valueAsNumber)} />
+        </label>
+        <label className="speed-control">Vertical Speed ({ySpeed})
+          <input type="range" min={1} value={ySpeed} onChange={(e) => setYSpeed(e.target.valueAsNumber)} />
+        </label>
+      </div>
+      <div className="grid-container">
+        {buttons.map((btn, key) => (
+          <Button
+            key={`btn-${key}`}
+            onClick={() => {
+              if (btn.command) {
+                sendCommand(btn.command);
+              } else {
+                console.log(`Button ${key+1} Clicked`);
+              }
+            }}
+            onLongPress={btn.hold ? () => btn.hold!(key) : undefined}
+          >
+            {btn.label || `Button ${key + 1}`}
+          </Button>
+        ))}
+      </div>
     </main>
   );
 }
