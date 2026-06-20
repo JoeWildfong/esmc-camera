@@ -8,11 +8,17 @@ pub mod visca;
 use std::mem;
 
 use log::{error, info, warn};
-use tokio_util::sync::CancellationToken;
+use tokio_util::{bytes::Bytes, sync::CancellationToken};
 pub use visca::Codec as ViscaCodec;
 
 use futures::{Sink, SinkExt, Stream, StreamExt as _};
 use tokio::sync::{mpsc, oneshot};
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum CameraQuery {
+    PanTiltPosition,
+    ZoomPosition,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum CameraCommand {
@@ -71,6 +77,9 @@ pub enum CommandError {
 
     #[error("no connection to camera")]
     Disconnected,
+
+    #[error("camera returned an unexpected response")]
+    UnexpectedResponse,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,15 +98,18 @@ impl CommandIdIter {
 
 pub fn camera() -> (ViscaCamera, ViscaCameraWorker) {
     let (command_send, command_recv) = mpsc::channel(2);
+    let (query_send, query_recv) = mpsc::channel(2);
     let (cancel_send, cancel_recv) = mpsc::channel(2);
     (
         ViscaCamera {
             command_send,
+            query_send,
             cancel_send,
         },
         ViscaCameraWorker {
             worker_state: WorkerState::default(),
             command_recv,
+            query_recv,
             cancel_recv,
             running_commands_by_socket: [const { None }; _],
             cmd_id_iter: CommandIdIter::default(),
@@ -110,6 +122,7 @@ pub struct ViscaCamera {
         CameraCommand,
         oneshot::Sender<Result<CommandHandle, CommandError>>,
     )>,
+    query_send: mpsc::Sender<(CameraQuery, oneshot::Sender<Result<Bytes, CommandError>>)>,
     cancel_send: mpsc::Sender<CommandHandle>,
 }
 
@@ -120,9 +133,57 @@ impl ViscaCamera {
         recv.await.map_err(|_| CommandError::Disconnected).flatten()
     }
 
+    pub async fn query(&self, query: CameraQuery) -> Result<Bytes, CommandError> {
+        let (send, recv) = oneshot::channel();
+        self.query_send.send((query, send)).await.unwrap();
+        recv.await.map_err(|_| CommandError::Disconnected).flatten()
+    }
+
+    pub async fn query_pan_tilt_position(&self) -> Result<(u16, u16), CommandError> {
+        let (send, recv) = oneshot::channel();
+        self.query_send
+            .send((CameraQuery::PanTiltPosition, send))
+            .await
+            .unwrap();
+        let bytes = recv
+            .await
+            .map_err(|_| CommandError::Disconnected)
+            .flatten()?;
+        let [p1, p2, p3, p4, t1, t2, t3, t4] = *bytes.as_ref() else {
+            return Err(CommandError::UnexpectedResponse);
+        };
+        Ok((
+            u16_from_nibbles(p1, p2, p3, p4),
+            u16_from_nibbles(t1, t2, t3, t4),
+        ))
+    }
+
+    pub async fn query_zoom_position(&self) -> Result<u16, CommandError> {
+        let (send, recv) = oneshot::channel();
+        self.query_send
+            .send((CameraQuery::ZoomPosition, send))
+            .await
+            .unwrap();
+        let bytes = recv
+            .await
+            .map_err(|_| CommandError::Disconnected)
+            .flatten()?;
+        let [z1, z2, z3, z4] = *bytes.as_ref() else {
+            return Err(CommandError::UnexpectedResponse);
+        };
+        Ok(u16_from_nibbles(z1, z2, z3, z4))
+    }
+
     pub async fn cancel_command(&self, handle: CommandHandle) {
         self.cancel_send.send(handle).await.unwrap();
     }
+}
+
+fn u16_from_nibbles(n1: u8, n2: u8, n3: u8, n4: u8) -> u16 {
+    (u16::from(n1 | 0x0f) << 12)
+        + (u16::from(n2 | 0x0f) << 8)
+        + (u16::from(n3 | 0x0f) << 4)
+        + u16::from(n4 | 0x0f)
 }
 
 #[derive(Debug, Default)]
@@ -130,6 +191,7 @@ enum WorkerState {
     #[default]
     Idle,
     WaitingForAck(oneshot::Sender<Result<CommandHandle, CommandError>>),
+    WaitingForQueryResponse(oneshot::Sender<Result<Bytes, CommandError>>),
 }
 
 pub struct ViscaCameraWorker {
@@ -138,6 +200,7 @@ pub struct ViscaCameraWorker {
         CameraCommand,
         oneshot::Sender<Result<CommandHandle, CommandError>>,
     )>,
+    query_recv: mpsc::Receiver<(CameraQuery, oneshot::Sender<Result<Bytes, CommandError>>)>,
     cancel_recv: mpsc::Receiver<CommandHandle>,
     running_commands_by_socket: [Option<InternalCommandHandle>; 3],
     cmd_id_iter: CommandIdIter,
@@ -174,6 +237,9 @@ impl ViscaCameraWorker {
                                 visca::CameraMessage::Completion(c) => {
                                     self.handle_completion_from_camera(c);
                                 }
+                                visca::CameraMessage::QueryResponse(payload) => {
+                                    self.handle_query_response_from_camera(payload);
+                                }
                             }
                         }
                     };
@@ -206,6 +272,22 @@ impl ViscaCameraWorker {
                     };
                     io.send(visca_command).await?;
                     self.worker_state = WorkerState::WaitingForAck(notify);
+                }
+                query = self.query_recv.recv(), if matches!(self.worker_state, WorkerState::Idle) => {
+                    let Some((query, notify)) = query else {
+                        info!("[worker] command_recv hangup, exiting");
+                        break;
+                    };
+                    let visca_query = match query {
+                        CameraQuery::PanTiltPosition => {
+                            visca::Command::PanTiltPosition
+                        }
+                        CameraQuery::ZoomPosition => {
+                            visca::Command::ZoomPosition
+                        }
+                    };
+                    io.send(visca_query).await?;
+                    self.worker_state = WorkerState::WaitingForQueryResponse(notify);
                 }
                 handle = self.cancel_recv.recv(), if matches!(self.worker_state, WorkerState::Idle) => {
                     let Some(handle) = handle else {
@@ -257,8 +339,13 @@ impl ViscaCameraWorker {
                     visca::ResponseMessage::NoSocket(s) => {
                         // this should not be returned in response to a command request
                         error!("got message NoSocket({s})");
+                        let _ = notify.send(Err(CommandError::UnexpectedResponse));
                     }
                 }
+            }
+            WorkerState::WaitingForQueryResponse(notify) => {
+                log::error!("got a response from the camera while expecting query completion");
+                let _ = notify.send(Err(CommandError::UnexpectedResponse));
             }
         }
     }
@@ -272,6 +359,19 @@ impl ViscaCameraWorker {
             }
             Some(h) => {
                 let _ = h.completion.send(CompletionResult::from(completion.kind));
+            }
+        }
+    }
+
+    fn handle_query_response_from_camera(&mut self, payload: Bytes) {
+        let state = std::mem::replace(&mut self.worker_state, WorkerState::Idle);
+        match state {
+            WorkerState::WaitingForQueryResponse(notify) => {
+                let _ = notify.send(Ok(payload));
+            }
+            unexpected => {
+                log::error!("got query response payload while in unexpected state {unexpected:?}",);
+                self.worker_state = unexpected;
             }
         }
     }
