@@ -11,7 +11,7 @@ export default function Ghost(props: SVGProps<SVGSVGElement>) {
       width="64"
       height="64"
       viewBox="0 0 512 512"
-      {...props} // eslint-disable-line react/jsx-props-no-spreading
+      {...props}
     >
       <path
         fill="currentColor"

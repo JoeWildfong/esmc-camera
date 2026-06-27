@@ -1,9 +1,9 @@
-import { useContext, useState } from "react";
-import { CameraProvider } from "./CameraProvider";
-import { Camera } from "./ffi";
-import Button from "./Button";
+import { useContext, useState } from 'react';
+import { CameraProvider } from './CameraProvider';
+import { Camera } from './ffi';
+import Button from './Button';
 
-export type PresetButtonProps = {};
+export type PresetButtonProps = {}; // eslint-disable-line @typescript-eslint/no-empty-object-type
 
 const goToPosition = async (camera: Camera, ptz: [number, number, number]) => {
   const [pan, tilt, zoom] = ptz;
@@ -11,9 +11,9 @@ const goToPosition = async (camera: Camera, ptz: [number, number, number]) => {
     camera.panTiltAbsolute(pan, tilt),
     camera.zoomAbsolute(zoom),
   ]);
-}
+};
 
-export const PresetButton: React.FC<React.PropsWithChildren<PresetButtonProps>> = ({ children }) => {
+export function PresetButton({ children }: React.PropsWithChildren<PresetButtonProps>) {
   const [presetPosition, setPresetPosition] = useState<[number, number, number] | null>(null);
   const [inProgress, setInProgress] = useState(false);
   const camera = useContext(CameraProvider);
@@ -33,13 +33,13 @@ export const PresetButton: React.FC<React.PropsWithChildren<PresetButtonProps>> 
       onLongPress={async () => {
         const [[pan, tilt], zoom] = await Promise.all([
           camera.queryPanTiltPosition(),
-          camera.queryZoomPosition()
+          camera.queryZoomPosition(),
         ]);
-        setPresetPosition([pan, tilt, zoom])
+        setPresetPosition([pan, tilt, zoom]);
       }}
       disabled={inProgress}
     >
       {children}
     </Button>
-  )
+  );
 }

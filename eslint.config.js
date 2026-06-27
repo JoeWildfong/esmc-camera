@@ -681,7 +681,7 @@ export default defineConfig([
       }],
       'import-x/order': ['error', { groups: [['builtin', 'external', 'internal']] }],
       'import-x/newline-after-import': 'error',
-      'import-x/prefer-default-export': 'error',
+      'import-x/prefer-default-export': 'off',
       'import-x/no-restricted-paths': 'off',
       'import-x/max-dependencies': ['off', { max: 10 }],
       'import-x/no-absolute-path': 'error',
@@ -952,12 +952,7 @@ export default defineConfig([
         multiline: 'consistent',
         singleline: 'consistent',
       }],
-      'react/jsx-props-no-spreading': ['error', {
-        html: 'enforce',
-        custom: 'enforce',
-        explicitSpread: 'ignore',
-        exceptions: [],
-      }],
+      'react/jsx-props-no-spreading': 'off',
       'react/prefer-read-only-props': 'off',
       'react/jsx-no-script-url': ['off', [
         {

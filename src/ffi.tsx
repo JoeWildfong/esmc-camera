@@ -1,8 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 
 export type CommandOptions = {
-  waitFor?: "received" | "finished";
-}
+  waitFor?: 'received' | 'finished';
+};
 
 export interface Camera {
   panTiltAbsolute(pan: number, tilt: number, options?: CommandOptions): Promise<void>;
@@ -19,13 +19,13 @@ export interface Camera {
 
 const commandFromOptions = (options?: CommandOptions): string => {
   switch (options?.waitFor) {
-    case "received":
-      return "send_camera_command";
+    case 'received':
+      return 'send_camera_command';
     case undefined:
-    case "finished":
-      return "wait_for_camera_command";
+    case 'finished':
+      return 'wait_for_camera_command';
   }
-}
+};
 
 export const ViscaCamera: Camera = {
   async panTiltAbsolute(pan, tilt, options) {
@@ -41,19 +41,19 @@ export const ViscaCamera: Camera = {
   },
 
   async sendCommand(command) {
-    return await invoke("send_camera_command", { command });
+    return await invoke('send_camera_command', { command });
   },
 
   async waitForCommand(command) {
-    return await invoke("wait_for_camera_command", { command });
+    return await invoke('wait_for_camera_command', { command });
   },
 
   async queryPanTiltPosition() {
-    return await invoke("query_pan_tilt_position");
+    return await invoke('query_pan_tilt_position');
   },
 
   async queryZoomPosition() {
-    return await invoke("query_zoom_position");
+    return await invoke('query_zoom_position');
   },
 
   async disconnect() {
@@ -67,7 +67,7 @@ export const ViscaCamera: Camera = {
   async connectTcp(ip: string, port: number) {
     return await invoke('tcp_camera_connection', { ip, port });
   },
-}
+};
 
 export type CameraCommand = PanTiltAbsolute | PanTiltRelative | ZoomAbsolute;
 

@@ -1,13 +1,13 @@
-import { useContext, useState } from "react";
-import Button from "./Button";
-import { CameraProvider } from "./CameraProvider";
-import { CameraCommand } from "./ffi";
+import { useContext, useState } from 'react';
+import Button from './Button';
+import { CameraProvider } from './CameraProvider';
+import { CameraCommand } from './ffi';
 
 export type CommandButtonProps = {
   command: CameraCommand,
 };
 
-export const CommandButton: React.FC<React.PropsWithChildren<CommandButtonProps>> = ({ command, children }) => {
+export function CommandButton({ command, children }: React.PropsWithChildren<CommandButtonProps>) {
   const [inProgress, setInProgress] = useState(false);
   const camera = useContext(CameraProvider);
 
@@ -25,5 +25,5 @@ export const CommandButton: React.FC<React.PropsWithChildren<CommandButtonProps>
     >
       {children}
     </Button>
-  )
+  );
 }

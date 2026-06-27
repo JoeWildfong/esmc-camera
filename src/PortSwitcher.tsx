@@ -57,7 +57,7 @@ const PortSwitcher = () => {
     }
     switch (port.value) {
       case tcpPort.value:
-        camera.connectTcp("127.0.0.1", 41414);
+        camera.connectTcp('127.0.0.1', 41414);
         break;
       case disconnect.value:
         camera.disconnect();
