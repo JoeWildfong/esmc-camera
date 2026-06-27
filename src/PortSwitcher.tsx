@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useContext, useState } from 'react';
 import Select, { ActionMeta } from 'react-select';
 import { SerialPortType, useAvailablePorts } from './useAvailablePorts';
-import { consoleCameraConnection, disconnectCamera, setCameraConnection } from './ffi';
 import Bluetooth from './icons/Bluetooth';
 import Pci from './icons/Pci';
 import Ghost from './icons/Ghost';
 import Usb from './icons/Usb';
+import { CameraProvider } from './CameraProvider';
 
 type PortTypeIconProps = {
   type: SerialPortType | 'Ghost'
@@ -35,9 +35,15 @@ type PortOption = {
 
 const PortSwitcher = () => {
   const availablePorts = useAvailablePorts();
+  const camera = useContext(CameraProvider);
   const consolePort: PortOption = {
     value: 'consolePort',
     label: 'Console (Debug)',
+    type: 'Unknown',
+  };
+  const tcpPort: PortOption = {
+    value: 'tcpPort',
+    label: 'TCP (Debug)',
     type: 'Unknown',
   };
   const disconnect: PortOption = {
@@ -54,12 +60,18 @@ const PortSwitcher = () => {
     if (port === null) {
       return;
     }
-    if (port.value === consolePort.value) {
-      consoleCameraConnection();
-    } else if (port.value === disconnect.value) {
-      disconnectCamera();
-    } else {
-      setCameraConnection(port.value);
+    switch (port.value) {
+      case consolePort.value:
+        camera.connectConsole();
+        break;
+      case tcpPort.value:
+        camera.connectTcp("127.0.0.1", 41414);
+        break;
+      case disconnect.value:
+        camera.disconnect();
+        break;
+      default:
+        camera.connectSerial(port.value);
     }
     setCurrentPort(port);
   };
@@ -71,6 +83,7 @@ const PortSwitcher = () => {
       type: port.port_type,
     })),
     consolePort,
+    tcpPort,
     disconnect,
   ];
 

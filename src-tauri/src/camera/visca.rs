@@ -1,12 +1,12 @@
 use std::io;
 
-use log::warn;
 use serde::Serialize;
 use thiserror::Error;
 use tokio_util::{
     bytes::{Buf, Bytes, BytesMut},
     codec,
 };
+use tracing::{Level, event};
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub enum Command {
@@ -159,7 +159,7 @@ impl codec::Decoder for Codec {
                 CameraMessage::command_not_executable(channel & 0x0f)
             }
             _ => {
-                warn!("unknown response from camera: {:x?}", command.as_ref());
+                event!(Level::WARN, "unknown response from camera: {:x?}", command.as_ref());
                 return self.decode(src);
             }
         };

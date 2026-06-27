@@ -1,12 +1,12 @@
-use std::{future::Future, time::Duration};
+use std::{future::Future, net::SocketAddr, time::Duration};
 
 use futures::{Stream, StreamExt};
-use log::error;
 use tauri::async_runtime;
-use tokio::sync::{watch, RwLock};
+use tokio::{net::TcpStream, sync::{RwLock, watch}};
 use tokio_serial::{frame::SerialFramed, SerialStream};
 use tokio_stream::wrappers::WatchStream;
-use tokio_util::sync::CancellationToken;
+use tokio_util::{codec::Framed, io::{InspectReader, InspectWriter}, sync::CancellationToken};
+use tracing::{Level, event, instrument};
 
 use crate::camera::{visca, CameraCommand, CommandError, CommandHandle, ViscaCamera};
 
@@ -14,7 +14,8 @@ type WorkerHandle = async_runtime::JoinHandle<Result<(), visca::Error>>;
 
 #[derive(Debug, Clone)]
 pub enum ManagerState {
-    Connected(String),
+    SerialPort(String),
+    TcpPort(SocketAddr),
     Disconnected,
     Debug,
 }
@@ -53,12 +54,18 @@ impl Manager {
         }
     }
 
+    pub async fn with_camera<T, F: AsyncFnOnce(&ViscaCamera) -> T>(&self, cb: F) -> Result<T, CommandError> {
+        match self.cam.read().await.as_ref() {
+            Some(c) => Ok(cb(c).await),
+            None => Err(CommandError::Disconnected),
+        }
+    }
+
     pub async fn run(&self) {
         let target_state = WatchStream::new(self.recv_target_state.clone());
         let mut worker: Option<WorkerHandle> = None;
 
         let connected = buffer_latest(target_state.map(async |target| {
-            println!("going to state {target:?}");
             self.go_to_state(&target).await
         }));
         let mut connected = std::pin::pin!(connected);
@@ -82,16 +89,17 @@ impl Manager {
 
                 }
                 exit = wait_if_some(worker.as_mut()) => {
-                    println!("worker died");
+                    worker = None;
                     let _ = self.real_state.send(ManagerState::Disconnected);
                     match exit {
                         Err(e) => {
-                            error!("[manager] tokio error {e}");
+                            event!(Level::ERROR, "[manager] tokio error {e}");
                         }
                         Ok(Err(e)) => {
-                            error!("[manager] visca error {e}");
+                            event!(Level::ERROR, "[manager] visca error {e}");
                         }
                         Ok(Ok(())) => {
+                            event!(Level::WARN, "[manager] worker exited normally");
                             return;
                         }
                     }
@@ -102,10 +110,11 @@ impl Manager {
         }
     }
 
+    #[instrument(skip(self))]
     async fn go_to_state(&self, target: &ManagerState) -> Option<(ViscaCamera, WorkerHandle)> {
         let result = match target {
             ManagerState::Disconnected => None,
-            ManagerState::Connected(s) => loop {
+            ManagerState::SerialPort(s) => loop {
                 match SerialStream::open(&tokio_serial::new(s, 9600)) {
                     Ok(io) => {
                         let codec = SerialFramed::new(io, super::visca::Codec::new(1));
@@ -119,7 +128,32 @@ impl Manager {
                         ));
                     }
                     Err(_) => {
-                        println!("failed to open {s:?}, retrying in 1s");
+                        event!(Level::WARN, "failed to open {s:?}, retrying in 1s");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                }
+            },
+            ManagerState::TcpPort(addr) => loop {
+                event!(Level::DEBUG, "connecting to {addr:?}");
+                match TcpStream::connect(addr).await {
+                    Ok(io) => {
+                        event!(Level::DEBUG, "connected to {addr:?}");
+                        let inspect = InspectWriter::new(
+                            InspectReader::new(io, |msg| event!(Level::DEBUG, "bytes received: {msg:x?}")),
+                            |msg| event!(Level::DEBUG, "bytes sent: {msg:x?}")
+                        );
+                        let codec = Framed::new(inspect, super::visca::Codec::new(1));
+                        let cancel_token = self.cancel.child_token();
+                        let (cam, mut cam_worker) = super::camera();
+                        break Some((
+                            cam,
+                            async_runtime::spawn(async move {
+                                cam_worker.run(codec, cancel_token).await
+                            }),
+                        ));
+                    }
+                    Err(_) => {
+                        event!(Level::WARN, "failed to connect to {addr:?}, retrying in 1s");
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 }
@@ -134,7 +168,6 @@ impl Manager {
                 ))
             }
         };
-        println!("in state {target:?}");
         let _ = self.real_state.send_replace(target.clone());
         result
     }

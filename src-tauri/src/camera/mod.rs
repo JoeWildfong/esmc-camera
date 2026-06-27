@@ -2,12 +2,10 @@ mod manager;
 pub use manager::{Manager, ManagerState};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tracing::{Level, event, instrument};
 
 pub mod visca;
 
-use std::mem;
-
-use log::{error, info, warn};
 use tokio_util::{bytes::Bytes, sync::CancellationToken};
 pub use visca::Codec as ViscaCodec;
 
@@ -212,6 +210,7 @@ impl ViscaCameraWorker {
     /// range: 0x01 (slow) - 0x14 (high)
     const TILT_SPEED: u8 = 0x05;
 
+    #[instrument(skip_all)]
     pub async fn run<Io>(&mut self, io: Io, cancel: CancellationToken) -> Result<(), visca::Error>
     where
         Io: Stream<Item = Result<visca::CameraMessage, visca::Error>>,
@@ -225,7 +224,7 @@ impl ViscaCameraWorker {
                     break;
                 }
                 response = io.next() => {
-                    println!("io event {response:?}");
+                    event!(Level::DEBUG, "io event {response:?}");
                     match response {
                         None => todo!(),
                         Some(Err(e)) => return Err(e),
@@ -246,7 +245,7 @@ impl ViscaCameraWorker {
                 }
                 cmd = self.command_recv.recv(), if matches!(self.worker_state, WorkerState::Idle) => {
                     let Some((cmd, notify)) = cmd else {
-                        info!("[worker] command_recv hangup, exiting");
+                        event!(Level::INFO, "[worker] command_recv hangup, exiting");
                         break;
                     };
                     let visca_command = match cmd {
@@ -270,12 +269,13 @@ impl ViscaCameraWorker {
                             visca::Command::ZoomAbsolute(zoom)
                         }
                     };
+                    event!(Level::INFO, "sending command {visca_command:?} and waiting for response");
                     io.send(visca_command).await?;
                     self.worker_state = WorkerState::WaitingForAck(notify);
                 }
                 query = self.query_recv.recv(), if matches!(self.worker_state, WorkerState::Idle) => {
                     let Some((query, notify)) = query else {
-                        info!("[worker] command_recv hangup, exiting");
+                        event!(Level::INFO, "[worker] command_recv hangup, exiting");
                         break;
                     };
                     let visca_query = match query {
@@ -286,21 +286,22 @@ impl ViscaCameraWorker {
                             visca::Command::ZoomPosition
                         }
                     };
+                    event!(Level::INFO, "sending query {visca_query:?} and waiting for response");
                     io.send(visca_query).await?;
                     self.worker_state = WorkerState::WaitingForQueryResponse(notify);
                 }
                 handle = self.cancel_recv.recv(), if matches!(self.worker_state, WorkerState::Idle) => {
                     let Some(handle) = handle else {
-                        info!("[worker] cancel_recv hangup, exiting");
+                        event!(Level::INFO, "[worker] cancel_recv hangup, exiting");
                         break;
                     };
                     let socket = handle.socket;
                     if matches!(self.running_commands_by_socket[usize::from(socket)], Some(ref running) if running.id == handle.id) {
+                        event!(Level::INFO, "sending cancel request for query on socket {socket}");
                         io.send(visca::Command::Cancel(socket)).await?;
+                    } else {
+                        event!(Level::INFO, "ignoring cancel request for query on socket {socket} since it doesn't match the running command");
                     }
-                }
-                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
-                    println!("running worker: state {:?}", self.worker_state);
                 }
             }
         }
@@ -308,9 +309,10 @@ impl ViscaCameraWorker {
     }
 
     fn handle_response_from_camera(&mut self, response: visca::ResponseMessage) {
-        match mem::replace(&mut self.worker_state, WorkerState::Idle) {
+        event!(Level::INFO, "got response, going to idle state");
+        match std::mem::replace(&mut self.worker_state, WorkerState::Idle) {
             WorkerState::Idle => {
-                error!("got a response message when not waiting for one");
+                event!(Level::ERROR, "got ack when not waiting for one");
             }
             WorkerState::WaitingForAck(notify) => {
                 match response {
@@ -338,13 +340,13 @@ impl ViscaCameraWorker {
                     }
                     visca::ResponseMessage::NoSocket(s) => {
                         // this should not be returned in response to a command request
-                        error!("got message NoSocket({s})");
+                        event!(Level::ERROR, "got message NoSocket({s})");
                         let _ = notify.send(Err(CommandError::UnexpectedResponse));
                     }
                 }
             }
             WorkerState::WaitingForQueryResponse(notify) => {
-                log::error!("got a response from the camera while expecting query completion");
+                event!(Level::ERROR, "got ack while expecting query response");
                 let _ = notify.send(Err(CommandError::UnexpectedResponse));
             }
         }
@@ -355,23 +357,27 @@ impl ViscaCameraWorker {
         let handle = self.running_commands_by_socket[usize::from(socket)].take();
         match handle {
             None => {
-                warn!("received completion for socket {socket}, but it is not running a command");
+                event!(Level::WARN, "received completion for socket {socket}, but it is not running a command");
             }
             Some(h) => {
+                event!(Level::DEBUG, "command {socket} finished");
                 let _ = h.completion.send(CompletionResult::from(completion.kind));
             }
         }
     }
 
     fn handle_query_response_from_camera(&mut self, payload: Bytes) {
-        let state = std::mem::replace(&mut self.worker_state, WorkerState::Idle);
-        match state {
+        event!(Level::INFO, "got response, going to idle state");
+        match std::mem::replace(&mut self.worker_state, WorkerState::Idle) {
+            WorkerState::Idle => {
+                event!(Level::ERROR, "got query response when not waiting for one");
+            }
             WorkerState::WaitingForQueryResponse(notify) => {
                 let _ = notify.send(Ok(payload));
             }
-            unexpected => {
-                log::error!("got query response payload while in unexpected state {unexpected:?}",);
-                self.worker_state = unexpected;
+            WorkerState::WaitingForAck(notify) => {
+                event!(Level::ERROR, "got query response while expecting ack");
+                let _ = notify.send(Err(CommandError::UnexpectedResponse));
             }
         }
     }

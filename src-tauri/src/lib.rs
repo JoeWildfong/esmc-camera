@@ -1,4 +1,4 @@
-use std::{sync::LazyLock, time::Duration};
+use std::{net::{IpAddr, SocketAddr}, sync::LazyLock, time::Duration};
 
 use tauri::{async_runtime, ipc};
 use tokio_serial::SerialPortInfo;
@@ -40,13 +40,20 @@ async fn stream_available_ports(
 
 #[tauri::command]
 async fn set_camera_connection(port: String) {
-    CAMERA.set_target_state(camera::ManagerState::Connected(port));
+    CAMERA.set_target_state(camera::ManagerState::SerialPort(port));
 }
 
 #[tauri::command]
 async fn console_camera_connection() {
     println!("setting camera to console mode");
     CAMERA.set_target_state(camera::ManagerState::Debug);
+}
+
+#[tauri::command]
+async fn tcp_camera_connection(ip: String, port: u16) {
+    if let Ok(addr) = ip.parse::<IpAddr>() {
+        CAMERA.set_target_state(camera::ManagerState::TcpPort(SocketAddr::from((addr, port))));
+    }
 }
 
 #[tauri::command]
@@ -68,6 +75,16 @@ async fn wait_for_camera_command(
     Ok(handle.wait().await)
 }
 
+#[tauri::command]
+async fn query_pan_tilt_position() -> Result<(u16, u16), camera::CommandError> {
+    CAMERA.with_camera(async |cam| cam.query_pan_tilt_position().await).await.flatten()
+}
+
+#[tauri::command]
+async fn query_zoom_position() -> Result<u16, camera::CommandError> {
+    CAMERA.with_camera(async |cam| cam.query_zoom_position().await).await.flatten()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     async_runtime::spawn(CAMERA.run());
@@ -77,9 +94,12 @@ pub fn run() {
             stream_available_ports,
             set_camera_connection,
             console_camera_connection,
+            tcp_camera_connection,
             disconnect_camera,
             send_camera_command,
-            wait_for_camera_command
+            wait_for_camera_command,
+            query_pan_tilt_position,
+            query_zoom_position,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

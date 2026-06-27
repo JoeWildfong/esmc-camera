@@ -1,78 +1,33 @@
 import { useState } from 'react';
 import './App.css';
-import { waitForCameraCommand, CameraCommand } from './ffi';
 import PortSwitcher from './PortSwitcher';
-import Button from './Button';
+import { CommandButton } from './CommandButton';
+import { PresetButton } from './PresetButton';
 
-type CommandButton = {
-  label: string;
-  command: CameraCommand | null;
-  hold?: (index: number) => void;
-};
-
-const  App = () => {
-  const [response, setResponse] = useState('');
+const App = () => {
   const [xSpeed, setXSpeed] = useState<number>(1);
   const [ySpeed, setYSpeed] = useState<number>(1);
 
+  const upButton = <CommandButton command={{"PanTiltRelative": [0, ySpeed]}} key="up">Up</CommandButton>;
+  const downButton = <CommandButton command={{"PanTiltRelative": [0, -ySpeed]}} key="down">Down</CommandButton>;
+  const leftButton = <CommandButton command={{"PanTiltRelative": [-xSpeed, 0]}} key="left">Left</CommandButton>;
+  const rightButton = <CommandButton command={{"PanTiltRelative": [xSpeed, 0]}} key="right">Right</CommandButton>;
 
-  const sendCommand = async (command: CameraCommand) => {
-    setResponse(await waitForCameraCommand(command));
-  }
-
-  const buttons: CommandButton[] = [
-    {
-      label: 'PanTiltAbsolute(0, 0)',
-      command: {
-        PanTiltAbsolute: [0, 0]
-      }
-    },
-    {
-      label: 'ZoomAbsolute(0)',
-      command: {
-        ZoomAbsolute: 0
-      }
-    }
+  // eslint-disable
+  const layout = [
+    <PresetButton key="preset-1" />,  <PresetButton key="preset-2" />,  <PresetButton key="preset-3" />,
+    <PresetButton key="preset-4" />,  <PresetButton key="preset-5" />,  <PresetButton key="preset-6" />,
+    <PresetButton key="preset-7" />,  <PresetButton key="preset-8" />,  <PresetButton key="preset-9" />,
+    <PresetButton key="preset-10" />, <PresetButton key="preset-11" />, <PresetButton key="preset-12" />,
+    <PresetButton key="preset-13" />, <PresetButton key="preset-14" />, <PresetButton key="preset-15" />,
+    <PresetButton key="preset-16" />, upButton,                         <PresetButton key="preset-17" />,
+    leftButton,                       downButton,                       rightButton,
   ];
-
-  buttons.push(...(new Array(25) as CommandButton[]).fill({
-    label: '',
-    command: null,
-    hold: (index) => console.log(`Button ${index+1} Held`),
-  }));
-
-  buttons[16] = {
-    label: 'Up',
-    command: {
-      PanTiltRelative: [0, ySpeed]
-    }
-  };
-
-  buttons[19] = {
-    label: 'Down',
-    command: {
-      PanTiltRelative: [0, -ySpeed]
-    }
-  };
-
-  buttons[20] = {
-    label: 'Right',
-    command: {
-      PanTiltRelative: [xSpeed, 0]
-    }
-  };
-
-  buttons[18] = {
-    label: 'Left',
-    command: {
-      PanTiltRelative: [-xSpeed, 0]
-    }
-  };
+  // eslint-enable
 
   return (
     <main className="container">
       <PortSwitcher />
-      {response && <p>{response}</p>}
       <div>
         <label className="speed-control">Horizontal Speed ({xSpeed})
           <input type="range" min={1} value={xSpeed} onChange={(e) => setXSpeed(e.target.valueAsNumber)} />
@@ -82,21 +37,7 @@ const  App = () => {
         </label>
       </div>
       <div className="grid-container">
-        {buttons.map((btn, key) => (
-          <Button
-            key={`btn-${key}`}
-            onClick={() => {
-              if (btn.command) {
-                sendCommand(btn.command);
-              } else {
-                console.log(`Button ${key+1} Clicked`);
-              }
-            }}
-            onLongPress={btn.hold ? () => btn.hold!(key) : undefined}
-          >
-            {btn.label || `Button ${key + 1}`}
-          </Button>
-        ))}
+        {...layout}
       </div>
     </main>
   );
