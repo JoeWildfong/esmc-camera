@@ -17,7 +17,6 @@ pub enum ManagerState {
     SerialPort(String),
     TcpPort(SocketAddr),
     Disconnected,
-    Debug,
 }
 
 pub struct Manager {
@@ -158,15 +157,6 @@ impl Manager {
                     }
                 }
             },
-            ManagerState::Debug => {
-                let codec = debug::DebugIo::new();
-                let cancel_token = self.cancel.child_token();
-                let (cam, mut cam_worker) = super::camera();
-                Some((
-                    cam,
-                    async_runtime::spawn(async move { cam_worker.run(codec, cancel_token).await }),
-                ))
-            }
         };
         let _ = self.real_state.send_replace(target.clone());
         result
@@ -211,119 +201,6 @@ where
                     yield val;
                 }
             }
-        }
-    }
-}
-
-mod debug {
-    use std::task::Poll;
-
-    use futures::{Sink, Stream};
-    use tokio::io::{Stdin, Stdout};
-    use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec, LinesCodecError};
-
-    use crate::camera::visca::{self, CameraMessage};
-
-    pin_project_lite::pin_project! {
-        pub(super) struct DebugIo {
-            #[pin]
-            stdin: FramedRead<Stdin, LinesCodec>,
-
-            #[pin]
-            stdout: FramedWrite<Stdout, LinesCodec>,
-        }
-    }
-
-    impl DebugIo {
-        pub(super) fn new() -> Self {
-            Self {
-                stdin: FramedRead::new(tokio::io::stdin(), LinesCodec::new()),
-                stdout: FramedWrite::new(tokio::io::stdout(), LinesCodec::new()),
-            }
-        }
-
-        fn convert_err(lines_err: LinesCodecError) -> visca::Error {
-            match lines_err {
-                LinesCodecError::Io(e) => visca::Error::Io(e),
-                LinesCodecError::MaxLineLengthExceeded => {
-                    visca::Error::Io(std::io::Error::other("max line length exceeded"))
-                }
-            }
-        }
-    }
-
-    impl Stream for DebugIo {
-        type Item = Result<CameraMessage, visca::Error>;
-
-        fn poll_next(
-            self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Option<Self::Item>> {
-            let Poll::Ready(line) = self.project().stdin.poll_next(cx) else {
-                return Poll::Pending;
-            };
-            let Some(line) = line else {
-                return Poll::Ready(None);
-            };
-
-            Poll::Ready(Some(match line.unwrap().as_str() {
-                "accepted 1" => Ok(visca::CameraMessage::Response(
-                    visca::ResponseMessage::Accepted(1),
-                )),
-                "accepted 2" => Ok(visca::CameraMessage::Response(
-                    visca::ResponseMessage::Accepted(2),
-                )),
-                "completed 1" => Ok(visca::CameraMessage::Completion(visca::CompletionMessage {
-                    kind: visca::CompletionMessageKind::Completed,
-                    socket: 1,
-                })),
-                "completed 2" => Ok(visca::CameraMessage::Completion(visca::CompletionMessage {
-                    kind: visca::CompletionMessageKind::Completed,
-                    socket: 2,
-                })),
-                _ => Err(visca::Error::Io(std::io::Error::other(
-                    "simulated io error",
-                ))),
-            }))
-        }
-    }
-
-    impl Sink<visca::Command> for DebugIo {
-        type Error = visca::Error;
-
-        fn start_send(
-            self: std::pin::Pin<&mut Self>,
-            item: visca::Command,
-        ) -> Result<(), Self::Error> {
-            let string = serde_json::to_string(&item).unwrap();
-            self.project()
-                .stdout
-                .start_send(string)
-                .map_err(Self::convert_err)
-        }
-
-        fn poll_ready(
-            self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            <FramedWrite<Stdout, LinesCodec> as Sink<String>>::poll_ready(self.project().stdout, cx)
-                .map_err(Self::convert_err)
-        }
-
-        fn poll_close(
-            self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            <FramedWrite<Stdout, LinesCodec> as Sink<String>>::poll_close(self.project().stdout, cx)
-                .map_err(Self::convert_err)
-        }
-
-        fn poll_flush(
-            self: std::pin::Pin<&mut Self>,
-            cx: &mut std::task::Context<'_>,
-        ) -> Poll<Result<(), Self::Error>> {
-            <FramedWrite<Stdout, LinesCodec> as Sink<String>>::poll_flush(self.project().stdout, cx)
-                .map_err(Self::convert_err)
         }
     }
 }

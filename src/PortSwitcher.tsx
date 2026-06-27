@@ -36,11 +36,6 @@ type PortOption = {
 const PortSwitcher = () => {
   const availablePorts = useAvailablePorts();
   const camera = useContext(CameraProvider);
-  const consolePort: PortOption = {
-    value: 'consolePort',
-    label: 'Console (Debug)',
-    type: 'Unknown',
-  };
   const tcpPort: PortOption = {
     value: 'tcpPort',
     label: 'TCP (Debug)',
@@ -61,9 +56,6 @@ const PortSwitcher = () => {
       return;
     }
     switch (port.value) {
-      case consolePort.value:
-        camera.connectConsole();
-        break;
       case tcpPort.value:
         camera.connectTcp("127.0.0.1", 41414);
         break;
@@ -82,7 +74,6 @@ const PortSwitcher = () => {
       label: port.port_name,
       type: port.port_type,
     })),
-    consolePort,
     tcpPort,
     disconnect,
   ];

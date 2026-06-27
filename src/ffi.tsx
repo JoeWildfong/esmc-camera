@@ -15,7 +15,6 @@ export interface Camera {
   disconnect(): Promise<void>;
   connectSerial(port: string): Promise<void>;
   connectTcp(ip: string, port: number): Promise<void>;
-  connectConsole(): Promise<void>;
 }
 
 const commandFromOptions = (options?: CommandOptions): string => {
@@ -68,10 +67,6 @@ export const ViscaCamera: Camera = {
   async connectTcp(ip: string, port: number) {
     return await invoke('tcp_camera_connection', { ip, port });
   },
-
-  async connectConsole() {
-    return await invoke('console_camera_connection');
-  }
 }
 
 export type CameraCommand = PanTiltAbsolute | PanTiltRelative | ZoomAbsolute;
@@ -90,10 +85,6 @@ type ZoomAbsolute = {
 
 export async function setCameraConnection(port: string) {
   await invoke('set_camera_connection', { port });
-}
-
-export async function consoleCameraConnection() {
-  await invoke('console_camera_connection');
 }
 
 export async function disconnectCamera() {

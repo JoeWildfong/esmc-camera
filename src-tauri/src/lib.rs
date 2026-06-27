@@ -44,12 +44,6 @@ async fn set_camera_connection(port: String) {
 }
 
 #[tauri::command]
-async fn console_camera_connection() {
-    println!("setting camera to console mode");
-    CAMERA.set_target_state(camera::ManagerState::Debug);
-}
-
-#[tauri::command]
 async fn tcp_camera_connection(ip: String, port: u16) {
     if let Ok(addr) = ip.parse::<IpAddr>() {
         CAMERA.set_target_state(camera::ManagerState::TcpPort(SocketAddr::from((addr, port))));
