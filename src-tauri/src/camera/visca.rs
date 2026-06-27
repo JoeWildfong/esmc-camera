@@ -11,14 +11,14 @@ use tracing::{Level, event};
 #[derive(Debug, PartialEq, Eq, Serialize)]
 pub enum Command {
     PanTiltAbsolute {
-        pan: u16,
-        tilt: u16,
+        pan: i16,
+        tilt: i16,
         pan_speed: u8,
         tilt_speed: u8,
     },
     PanTiltRelative {
-        pan: u16,
-        tilt: u16,
+        pan: i16,
+        tilt: i16,
         pan_speed: u8,
         tilt_speed: u8,
     },
@@ -180,8 +180,8 @@ impl codec::Encoder<Command> for Codec {
                 pan_speed,
                 tilt_speed,
             } => {
-                let p = u16_to_nibbles(pan);
-                let t = u16_to_nibbles(tilt);
+                let p = visca_nibble_encode(pan.to_be_bytes());
+                let t = visca_nibble_encode(tilt.to_be_bytes());
                 &[
                     0x80 | self.cam_id, 0x01, 0x06, 0x02,
                     pan_speed, tilt_speed,
@@ -196,8 +196,8 @@ impl codec::Encoder<Command> for Codec {
                 pan_speed,
                 tilt_speed,
             } => {
-                let p = u16_to_nibbles(pan);
-                let t = u16_to_nibbles(tilt);
+                let p = visca_nibble_encode(pan.to_be_bytes());
+                let t = visca_nibble_encode(tilt.to_be_bytes());
                 &[
                     0x80 | self.cam_id, 0x01, 0x06, 0x03,
                     pan_speed, tilt_speed,
@@ -207,7 +207,7 @@ impl codec::Encoder<Command> for Codec {
                 ]
             }
             Command::ZoomAbsolute(zoom) => {
-                let z = u16_to_nibbles(zoom);
+                let z = visca_nibble_encode(zoom.to_be_bytes());
                 &[
                     0x80 | self.cam_id, 0x01, 0x04, 0x47,
                     z[0], z[1], z[2], z[3],
@@ -229,9 +229,9 @@ impl codec::Encoder<Command> for Codec {
     }
 }
 
-const fn u16_to_nibbles(v: u16) -> [u8; 4] {
-    let [v1, v2] = v.to_be_bytes();
-    [(v1 >> 4) & 0x0f, v1 & 0x0f, (v2 >> 4) & 0x0f, v2 & 0x0f]
+const fn visca_nibble_encode(bytes: [u8; 2]) -> [u8; 4] {
+    let [b1, b2] = bytes;
+    [(b1 >> 4) & 0x0f, b1 & 0x0f, (b2 >> 4) & 0x0f, b2 & 0x0f]
 }
 
 #[cfg(test)]
@@ -263,16 +263,16 @@ mod tests {
     serialize_tests!(
         serialize_pan_tilt_absolute,
         Command::PanTiltAbsolute {
-            pan: 0xaaaa,
-            tilt: 0xbbbb,
+            pan: 0xaaaa_u16 as i16,
+            tilt: 0xbbbb_u16 as i16,
             pan_speed: 0xcc,
             tilt_speed: 0xdd,
         },
         "81 01 06 02 cc dd 0a 0a 0a 0a 0b 0b 0b 0b ff",
         serialize_pan_tilt_relative,
         Command::PanTiltRelative {
-            pan: 0xaaaa,
-            tilt: 0xbbbb,
+            pan: 0xaaaa_u16 as i16,
+            tilt: 0xbbbb_u16 as i16,
             pan_speed: 0xcc,
             tilt_speed: 0xdd,
         },

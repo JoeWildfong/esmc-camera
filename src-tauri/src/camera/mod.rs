@@ -20,8 +20,8 @@ pub enum CameraQuery {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum CameraCommand {
-    PanTiltAbsolute(u16, u16),
-    PanTiltRelative(u16, u16),
+    PanTiltAbsolute(i16, i16),
+    PanTiltRelative(i16, i16),
     ZoomAbsolute(u16),
 }
 
@@ -137,7 +137,7 @@ impl ViscaCamera {
         recv.await.map_err(|_| CommandError::Disconnected).flatten()
     }
 
-    pub async fn query_pan_tilt_position(&self) -> Result<(u16, u16), CommandError> {
+    pub async fn query_pan_tilt_position(&self) -> Result<(i16, i16), CommandError> {
         let (send, recv) = oneshot::channel();
         self.query_send
             .send((CameraQuery::PanTiltPosition, send))
@@ -151,8 +151,8 @@ impl ViscaCamera {
             return Err(CommandError::UnexpectedResponse);
         };
         Ok((
-            u16_from_nibbles(p1, p2, p3, p4),
-            u16_from_nibbles(t1, t2, t3, t4),
+            i16_from_nibbles(p1, p2, p3, p4),
+            i16_from_nibbles(t1, t2, t3, t4),
         ))
     }
 
@@ -177,11 +177,18 @@ impl ViscaCamera {
     }
 }
 
+fn i16_from_nibbles(n1: u8, n2: u8, n3: u8, n4: u8) -> i16 {
+    i16::from_be_bytes([
+        (n1 & 0x0f) << 4 | (n2 & 0x0f),
+        (n3 & 0x0f) << 4 | (n4 & 0x0f)
+    ])
+}
+
 fn u16_from_nibbles(n1: u8, n2: u8, n3: u8, n4: u8) -> u16 {
-    (u16::from(n1 | 0x0f) << 12)
-        + (u16::from(n2 | 0x0f) << 8)
-        + (u16::from(n3 | 0x0f) << 4)
-        + u16::from(n4 | 0x0f)
+    u16::from_be_bytes([
+        (n1 & 0x0f) << 4 | (n2 & 0x0f),
+        (n3 & 0x0f) << 4 | (n4 & 0x0f)
+    ])
 }
 
 #[derive(Debug, Default)]

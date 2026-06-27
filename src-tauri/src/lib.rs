@@ -70,7 +70,7 @@ async fn wait_for_camera_command(
 }
 
 #[tauri::command]
-async fn query_pan_tilt_position() -> Result<(u16, u16), camera::CommandError> {
+async fn query_pan_tilt_position() -> Result<(i16, i16), camera::CommandError> {
     CAMERA.with_camera(async |cam| cam.query_pan_tilt_position().await).await.flatten()
 }
 
@@ -87,7 +87,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             stream_available_ports,
             set_camera_connection,
-            console_camera_connection,
             tcp_camera_connection,
             disconnect_camera,
             send_camera_command,
